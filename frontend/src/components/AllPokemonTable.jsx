@@ -3,7 +3,7 @@ import { Search, RefreshCw } from 'lucide-react';
 import { NATURES } from '../core/showdownImport.js';
 import { POKEMON_ICON_FALLBACK_URL } from '../core/iconResolver.js';
 import { ALL_POKEMON_BOXES } from '../services/allPokemon.js';
-import { buildRoster, rosterMarkdown } from '../services/rosterExport.js';
+import { buildRoster, rosterMarkdown, rosterShowdown } from '../services/rosterExport.js';
 
 const PAGE_SIZE = 100;
 const STATS = [
@@ -115,6 +115,7 @@ export default function AllPokemonTable({ client }) {
     const [itemNames, setItemNames] = useState(new Map());
     const [moveNames, setMoveNames] = useState(new Map());
     const [selectedPcKeys, setSelectedPcKeys] = useState(new Set());
+    const [copyStatus, setCopyStatus] = useState('');
 
     useEffect(() => {
         let cancelled = false;
@@ -158,6 +159,7 @@ export default function AllPokemonTable({ client }) {
     const partyCount = pokemon.filter((row) => row.source === 'party').length;
     const resetPage = () => { setShown(PAGE_SIZE); setInspectedKey(null); };
     const visiblePcKeys = filtered.filter((row) => row.source === 'pc').map((row) => row.rosterKey);
+    const allVisibleSelected = visiblePcKeys.length > 0 && visiblePcKeys.every((key) => selectedPcKeys.has(key));
     const selectedCount = pokemon.filter((row) => row.source === 'pc' && selectedPcKeys.has(row.rosterKey)).length;
     const downloadRoster = (kind) => {
         const roster = buildRoster(pokemon, selectedPcKeys, itemNames, moveNames);
@@ -171,6 +173,16 @@ export default function AllPokemonTable({ client }) {
         anchor.click();
         anchor.remove();
         setTimeout(() => URL.revokeObjectURL(url), 0);
+    };
+    const copyShowdown = async () => {
+        const roster = buildRoster(pokemon, selectedPcKeys, itemNames, moveNames);
+        if (!roster.pokemon.length) return;
+        try {
+            await navigator.clipboard.writeText(rosterShowdown(roster));
+            setCopyStatus(`Copied ${roster.pokemon.length} Showdown sets`);
+        } catch {
+            setCopyStatus('Copy failed: clipboard access was blocked');
+        }
     };
 
     return (
@@ -210,14 +222,22 @@ export default function AllPokemonTable({ client }) {
 
             {!loading && !error && <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-700 bg-slate-800/70 p-3 text-sm">
                 <span className="mr-auto text-slate-300">Export all {partyCount} Party Pokémon and {selectedCount} selected PC Pokémon.</span>
-                <button type="button" onClick={() => setSelectedPcKeys((current) => new Set([...current, ...visiblePcKeys]))}
-                    disabled={!visiblePcKeys.length} className="rounded-lg border border-slate-600 px-3 py-2 text-slate-100 hover:bg-slate-700 disabled:opacity-50">Select filtered PC</button>
+                <label className="flex items-center gap-2 px-1 text-slate-100">
+                    <input type="checkbox" checked={allVisibleSelected} disabled={!visiblePcKeys.length} className="accent-blue-500"
+                        onChange={() => setSelectedPcKeys((current) => allVisibleSelected
+                            ? new Set([...current].filter((key) => !visiblePcKeys.includes(key)))
+                            : new Set([...current, ...visiblePcKeys]))} />
+                    Select all PC ({visiblePcKeys.length})
+                </label>
                 <button type="button" onClick={() => setSelectedPcKeys(new Set())} disabled={!selectedCount}
                     className="rounded-lg border border-slate-600 px-3 py-2 text-slate-100 hover:bg-slate-700 disabled:opacity-50">Clear PC</button>
                 <button type="button" onClick={() => downloadRoster('json')} disabled={!partyCount && !selectedCount}
                     className="rounded-lg bg-blue-600 px-3 py-2 font-semibold text-white hover:bg-blue-500 disabled:opacity-50">Export JSON</button>
                 <button type="button" onClick={() => downloadRoster('md')} disabled={!partyCount && !selectedCount}
                     className="rounded-lg border border-blue-500 px-3 py-2 font-semibold text-blue-100 hover:bg-blue-500/20 disabled:opacity-50">Export Markdown</button>
+                <button type="button" onClick={copyShowdown} disabled={!partyCount && !selectedCount}
+                    className="rounded-lg border border-blue-500 px-3 py-2 font-semibold text-blue-100 hover:bg-blue-500/20 disabled:opacity-50">Copy Showdown</button>
+                <span className="w-full text-right text-xs text-blue-200" aria-live="polite">{copyStatus}</span>
             </div>}
 
             {loading ? <p className="py-12 text-center text-slate-400" role="status">Reading Party and PC boxes…</p> : null}

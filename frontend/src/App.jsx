@@ -635,7 +635,7 @@ const App = () => {
                                             <p className="mt-1 text-[11px] text-slate-500">Accepted: <span className="font-mono">.sav</span> and <span className="font-mono">.srm</span></p>
                                             <label className="mt-4 inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-500 px-5 py-2.5 rounded-xl cursor-pointer font-bold transition-all shadow-lg active:scale-95 text-xs md:text-sm">
                                                 SELECT SAVE FILE <ArrowRight size={14} />
-                                                <input type="file" className="hidden" onChange={handleUpload} accept=".sav,.srm" />
+                                                <input type="file" className="hidden" onChange={handleUpload} accept=".sav,.srm,.sa1,.sa2,.sa3,.sa4,.saveram,.bin" />
                                             </label>
                                         </div>
 

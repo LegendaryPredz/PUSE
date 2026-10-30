@@ -1,5 +1,6 @@
 // Read-only projection; the backend implementation in modules/roster_export.py is canonical.
 import { NATURES } from '../core/showdownImport.js';
+import SHOWDOWN_NAMES from '../core/showdownNames.json' with { type: 'json' };
 
 export const ROSTER_FORMAT = 'puse.roster';
 export const ROSTER_VERSION = 1;
@@ -74,4 +75,61 @@ export function rosterMarkdown(roster) {
             `Moves: ${mon.moves.map((move) => move.name).join(', ') || 'None'}`, '');
     }
     return `${lines.join('\n').trimEnd()}\n`;
+}
+
+// Showdown suffix per PUSE form alias; unlisted (cosmetic or unidentified) forms export as the base species.
+const FORM_SUFFIX = {
+    Mega: 'Mega', 'Mega X': 'Mega-X', 'Mega Y': 'Mega-Y', Primal: 'Primal', Gigantamax: 'Gmax',
+    Alolan: 'Alola', Galarian: 'Galar', Hisuian: 'Hisui',
+    'Therian Forme': 'Therian', 'Origin Forme': 'Origin', 'Sky Forme': 'Sky', 'Blade Forme': 'Blade',
+    'Attack Forme': 'Attack', 'Defense Forme': 'Defense', 'Speed Forme': 'Speed',
+    'Heat Form': 'Heat', 'Wash Form': 'Wash', 'Frost Form': 'Frost', 'Fan Form': 'Fan', 'Mow Form': 'Mow',
+    'Zen Mode': 'Zen', 'Galarian Zen Mode': 'Galar-Zen', 'Galarian Standard Mode': 'Galar',
+    'School Form': 'School', 'Hangry Mode': 'Hangry', 'Low Key Form': 'Low-Key', 'Noice Face': 'Noice',
+    'Rapid Strike Style': 'Rapid-Strike', 'Crowned Sword': 'Crowned', 'Crowned Shield': 'Crowned',
+    'Ice Rider': 'Ice', 'Shadow Rider': 'Shadow', Ash: 'Ash',
+    'Eternal Flower': 'Eternal', 'Sandy Cloak': 'Sandy', 'Trash Cloak': 'Trash',
+};
+const FEMALE_FORMS = new Set(['Meowstic', 'Indeedee', 'Basculegion', 'Oinkologne']); // other "Female Form"s are cosmetic
+const SPECIES_BY_ID = { 29: 'Nidoran-F', 32: 'Nidoran-M' }; // both are "Nidoran?" in the ROM name table
+const HIDDEN_POWER_TYPES = ['Fighting', 'Flying', 'Poison', 'Ground', 'Rock', 'Bug', 'Ghost', 'Steel',
+    'Fire', 'Water', 'Grass', 'Electric', 'Psychic', 'Ice', 'Dragon', 'Dark'];
+
+function showdownSpecies(species) {
+    if (SPECIES_BY_ID[species.id]) return SPECIES_BY_ID[species.id];
+    const [, base, alias] = species.name.match(/^(.*) \((.+)\)$/) || [null, species.name, ''];
+    const name = SHOWDOWN_NAMES.species[base] || base.replace(/^Unown \w$/, 'Unown');
+    const type = alias.match(/^(\w+) Type$/)?.[1];
+    const female = alias === 'Female Form' && FEMALE_FORMS.has(name) ? 'F' : '';
+    const suffix = type ? (type === 'Fight' ? 'Fighting' : type) : FORM_SUFFIX[alias] || female;
+    return suffix ? `${name}-${suffix}` : name;
+}
+
+function hiddenPowerType(ivs) {
+    const bits = ['HP', 'Atk', 'Def', 'Spe', 'SpA', 'SpD'].reduce((sum, key, index) => sum + ((ivs[key] & 1) << index), 0);
+    return HIDDEN_POWER_TYPES[Math.floor((bits * 15) / 63)];
+}
+
+function spread(values, skip) {
+    return STATS.filter((key) => values[key] !== skip).map((key) => `${values[key]} ${key}`).join(' / ');
+}
+
+export function rosterShowdown(roster) {
+    return roster.pokemon.map((mon) => {
+        const gender = { Male: ' (M)', Female: ' (F)' }[mon.gender] || '';
+        const item = mon.held_item.id ? ` @ ${SHOWDOWN_NAMES.items[mon.held_item.name] || mon.held_item.name}` : '';
+        const lines = [`${showdownSpecies(mon.species)}${gender}${item}`];
+        if (mon.ability.name) lines.push(`Ability: ${SHOWDOWN_NAMES.abilities[mon.ability.name] || mon.ability.name}`);
+        lines.push(`Level: ${mon.level}`);
+        if (mon.shiny) lines.push('Shiny: Yes');
+        const evs = spread(mon.evs, 0);
+        if (evs) lines.push(`EVs: ${evs}`);
+        lines.push(`${mon.nature.name} Nature`);
+        const ivs = spread(mon.ivs, 31);
+        if (ivs) lines.push(`IVs: ${ivs}`);
+        for (const move of mon.moves) {
+            lines.push(`- ${move.name === 'Hidden Power' ? `Hidden Power ${hiddenPowerType(mon.ivs)}` : SHOWDOWN_NAMES.moves[move.name] || move.name}`);
+        }
+        return lines.join('\n');
+    }).join('\n\n') + '\n';
 }
