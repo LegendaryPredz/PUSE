@@ -22,6 +22,7 @@ import {
     ListFilter,
 } from 'lucide-react';
 import { createApiClient, getInitialRuntimeMode, persistRuntimeMode, RUNTIME_MODES } from './services/apiClient.js';
+import { bulkMovePc } from './services/pcBulkMove.js';
 import { getExpAtLevel, getSpeciesGrowthRate } from './core/growth.js';
 
 const PartyGrid = lazy(() => import('./components/PartyGrid'));
@@ -427,6 +428,27 @@ const App = () => {
             alert('Pokemon released successfully.');
         } catch {
             alert('Failed to release Pokemon.');
+        }
+    };
+
+    const handleMovePC = async (payload) => {
+        try {
+            if (payload.sources) {
+                const { moved, remaining, lastError } = await bulkMovePc(client, payload.sources, payload.destinations);
+                if (moved) await client.saveAll();
+                setPcBoxId(payload.destinations[0].box);
+                setRefreshKey(prev => prev + 1);
+                if (remaining) {
+                    alert(`Moved ${moved} Pokemon. ${remaining} didn't fit: no free slots left in the following boxes.${lastError ? ` (${lastError.message})` : ''}`);
+                }
+                return;
+            }
+            await client.movePc(payload);
+            await client.saveAll();
+            setPcBoxId(payload.to_box);
+            setRefreshKey(prev => prev + 1);
+        } catch (err) {
+            alert(`Failed to move Pokemon: ${err?.message || 'unknown error'}`);
         }
     };
 
@@ -922,6 +944,7 @@ const App = () => {
                                 }}
                                 onAddPokemon={(target) => setPcInsertTarget(target)}
                                 onReleasePokemon={handleReleasePC}
+                                onMovePokemon={handleMovePC}
                             />}
                             {supports('roster_export') && activeTab === 'all' && <AllPokemonTable key={`all-${refreshKey}`} client={client} />}
                             {activeTab === 'bag' && <BagView client={client} initialUnsaved={bagHasUnsavedChanges} onDirtyChange={setBagHasUnsavedChanges} />}

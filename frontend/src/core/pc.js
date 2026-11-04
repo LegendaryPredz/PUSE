@@ -1211,6 +1211,59 @@ export function releasePcMon(context, payload) {
     }
 }
 
+function readPcSlotRaw(context, box, slot) {
+    const { buffer, offset, kind } = getMonBufferAndOffset(context, box, slot);
+    if (kind === 'absolute') {
+        return (context.absoluteEdits.get(offset) || buffer.slice(offset, offset + MON_SIZE_PC)).slice();
+    }
+    return buffer.slice(offset, offset + MON_SIZE_PC);
+}
+
+function writePcSlotRaw(context, box, slot, raw) {
+    const { buffer, offset, kind } = getMonBufferAndOffset(context, box, slot);
+    if (kind === 'absolute') {
+        context.absoluteEdits.set(offset, raw);
+        const sectorOff = Math.floor(offset / SECTION_SIZE) * SECTION_SIZE;
+        if (shouldTrackAbsoluteSectorForChecksum(context.sourceBuffer, sectorOff)) {
+            context.absoluteTouchedSectors.add(sectorOff);
+        }
+    } else {
+        buffer.set(raw, offset);
+    }
+}
+
+// Moves a PC record to another slot (any box); swaps when the target is occupied.
+export function movePcMon(context, payload) {
+    requireCapability('pc_insert');
+    const fromBox = Number(payload?.from_box);
+    const fromSlot = Number(payload?.from_slot);
+    const toBox = Number(payload?.to_box);
+    const toSlot = Number(payload?.to_slot);
+    for (const [box, slot] of [[fromBox, fromSlot], [toBox, toSlot]]) {
+        if (!Number.isInteger(box) || box < 1 || box > 26 || !Number.isInteger(slot) || slot < 1 || slot > 30) {
+            throw new Error('Invalid PC box or slot');
+        }
+        if (!isPcSlotWritable(context, box, slot)) {
+            throw new Error('Slot not writable in this save layout');
+        }
+    }
+    if (fromBox === toBox && fromSlot === toSlot) {
+        return { box: toBox, slot: toSlot, swapped: false };
+    }
+    const fromRaw = readPcSlotRaw(context, fromBox, fromSlot);
+    if (ru16(fromRaw, OFF_SPECIES) === 0) {
+        throw new Error('Pokemon not found in PC');
+    }
+    const toRaw = readPcSlotRaw(context, toBox, toSlot);
+    const swapped = ru16(toRaw, OFF_SPECIES) !== 0;
+    if (swapped && payload.allow_swap === false) {
+        throw new Error('Target slot is occupied');
+    }
+    writePcSlotRaw(context, toBox, toSlot, fromRaw);
+    writePcSlotRaw(context, fromBox, fromSlot, swapped ? toRaw : new Uint8Array(MON_SIZE_PC));
+    return { box: toBox, slot: toSlot, swapped };
+}
+
 export function editPcMonFull(context, payload, speciesMap = null) {
     const box = Number(payload.box);
     const slot = Number(payload.slot);

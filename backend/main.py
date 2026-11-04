@@ -1663,6 +1663,78 @@ async def release_pc_mon(upd: PCRelease):
     return {"status": "Pokemon released from PC", "box": box, "slot": slot}
 
 
+class PCMove(BaseModel):
+    from_box: int
+    from_slot: int
+    to_box: int
+    to_slot: int
+    allow_swap: bool = True
+
+
+def _pc_slot_location(box, slot):
+    """Return (buffer, offset, kind) for a PC slot, mirroring insert's layout rules."""
+    ctx = current_save["pc_context"]
+    size = box_mod.MON_SIZE_PC
+    if box < 1 or box > 26 or slot < 1 or slot > 30:
+        raise HTTPException(status_code=400, detail="Invalid PC box or slot")
+    if box == 26:
+        _require_feature("preset")
+        buf = ctx.get("preset_buffer")
+        off = box_mod.OFFSET_PRESET_START + (slot - 1) * size
+        if buf is None or off + size > len(buf):
+            raise HTTPException(status_code=400, detail="Invalid preset slot")
+        return buf, off, "preset"
+    off = ((box - 1) * 30 + (slot - 1)) * size
+    if off + size <= len(ctx["pc_buffer"]):
+        return ctx["pc_buffer"], off, "stream"
+    abs_off = ctx.get("fallback_slot_offsets", {}).get(box, {}).get(slot) if ctx.get("fallback_box_starts", {}).get(box) else None
+    if abs_off is None or abs_off + size > len(current_save["data"]):
+        raise HTTPException(status_code=400, detail="Slot not writable in this save layout")
+    return current_save["data"], abs_off, "absolute"
+
+
+@app.post("/pc/move")
+async def move_pc_mon(upd: PCMove):
+    """Move a PC Pokemon to any slot; swaps when the target is occupied."""
+    _require_feature("pc_insert")
+    if not current_save["data"]:
+        raise HTTPException(status_code=400, detail="Upload a .sav file")
+    if current_save["pc_context"].get("pc_buffer") is None:
+        await load_pc()
+
+    src = (int(upd.from_box), int(upd.from_slot))
+    dst = (int(upd.to_box), int(upd.to_slot))
+    size = box_mod.MON_SIZE_PC
+    locs = {key: _pc_slot_location(*key) for key in (src, dst)}
+    if src == dst:
+        return {"box": dst[0], "slot": dst[1], "swapped": False}
+
+    raws = {key: bytes(buf[off: off + size]) for key, (buf, off, _) in locs.items()}
+    if box_mod.ru16(raws[src], box_mod.OFF_SPECIES) == 0:
+        raise HTTPException(status_code=404, detail="Pokemon not found in PC")
+    swapped = box_mod.ru16(raws[dst], box_mod.OFF_SPECIES) != 0
+    if swapped and not upd.allow_swap:
+        raise HTTPException(status_code=400, detail="Target slot is occupied")
+    new_raws = {dst: raws[src], src: raws[dst] if swapped else bytes(size)}
+
+    ctx = current_save["pc_context"]
+    ctx["mons"] = [m for m in ctx["mons"] if (m.box, m.slot) not in (src, dst)]
+    for key, raw in new_raws.items():
+        buf, off, kind = locs[key]
+        buf[off: off + size] = raw
+        if kind == "absolute":
+            sector_off = (off // box_mod.SECTION_SIZE) * box_mod.SECTION_SIZE
+            if _should_track_absolute_sector_for_checksum(current_save["data"], sector_off):
+                ctx["absolute_touched_sectors"] = sorted(set(ctx.get("absolute_touched_sectors", [])) | {sector_off})
+        mon = box_mod.UnboundPCMon(bytearray(raw), *key)
+        if mon.is_valid:
+            mon.buffer_offset = off
+            if kind == "absolute":
+                mon.buffer_kind = "absolute"
+            ctx["mons"].append(mon)
+    return {"box": dst[0], "slot": dst[1], "swapped": swapped}
+
+
 # --- Additional models for party updates ---
 class EvUpdate(BaseModel):
     hp: int

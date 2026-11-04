@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { ChevronLeft, ChevronRight, Package, Trash2 } from 'lucide-react';
+import { ArrowRightLeft, CheckSquare, ChevronLeft, ChevronRight, Package, Trash2, X } from 'lucide-react';
 import { POKEMON_ICON_FALLBACK_URL } from '../core/iconResolver.js';
 
 import { PROFILE, isRadicalRed } from '../core/profile.js';
@@ -9,12 +9,21 @@ function getBoxLabel(boxId) {
     return Number(boxId) === 26 ? 'Preset' : `Box ${boxId}`;
 }
 
-const PCGrid = ({ client, boxId, onBoxChange, onEditPokemon, onAddPokemon, onReleasePokemon }) => {
+const PCGrid = ({ client, boxId, onBoxChange, onEditPokemon, onAddPokemon, onReleasePokemon, onMovePokemon }) => {
     const VISIBLE_BOX_SEQUENCE = useMemo(() => isRadicalRed() ? Array.from({length: PROFILE.storage.pc.box_count}, (_, i) => i + 1) : [...Array.from({length:24}, (_, i) => i + 1),26], []);
     const [pokemon, setPokemon] = useState([]);
     const [writableSlots, setWritableSlots] = useState(new Set());
     const [loading, setLoading] = useState(false);
     const [pcLoaded, setPcLoaded] = useState(false);
+    // Picked-up Pokemon ({ box, slot, pokemon }); survives box changes so they can be dropped into any box.
+    const [selection, setSelection] = useState([]);
+    const moving = selection.length > 0;
+    const isSelected = (slot) => selection.some((s) => s.box === Number(boxId) && s.slot === slot);
+    const toggleSelected = (slot, pk) => setSelection((prev) => (
+        prev.some((s) => s.box === Number(boxId) && s.slot === slot)
+            ? prev.filter((s) => !(s.box === Number(boxId) && s.slot === slot))
+            : [...prev, { box: Number(boxId), slot, pokemon: pk }]
+    ));
     const fetchBox = useCallback(async (id) => {
         setLoading(true);
         try {
@@ -65,6 +74,22 @@ const PCGrid = ({ client, boxId, onBoxChange, onEditPokemon, onAddPokemon, onRel
         onBoxChange(VISIBLE_BOX_SEQUENCE[next]);
     };
 
+    const dropSelection = (slot) => {
+        const sources = selection.map(({ box, slot: s }) => ({ box, slot: s }));
+        setSelection([]);
+        if (sources.length === 1) {
+            onMovePokemon?.({ from_box: sources[0].box, from_slot: sources[0].slot, to_box: Number(boxId), to_slot: slot });
+            return;
+        }
+        // Fill this box from the clicked slot, then overflow into the following boxes (never into Preset).
+        const startIdx = VISIBLE_BOX_SEQUENCE.indexOf(Number(boxId));
+        const overflow = Number(boxId) === 26 ? [] : VISIBLE_BOX_SEQUENCE.slice(startIdx + 1).filter((b) => b !== 26);
+        onMovePokemon?.({
+            sources,
+            destinations: [{ box: Number(boxId), startSlot: slot }, ...overflow.map((box) => ({ box, startSlot: 1 }))],
+        });
+    };
+
     const normalizedSlots = Array.from({ length: BOX_SLOTS }, (_, idx) => {
         const slot = idx + 1;
         return {
@@ -102,6 +127,20 @@ const PCGrid = ({ client, boxId, onBoxChange, onEditPokemon, onAddPokemon, onRel
                     <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1">
                         {pokemon.length} / {BOX_SLOTS} Pokemon
                     </p>
+                    {onMovePokemon && pokemon.some((pk) => writableSlots.has(Number(pk.slot))) && (
+                        <button
+                            type="button"
+                            onClick={() => setSelection((prev) => [
+                                ...prev,
+                                ...pokemon
+                                    .filter((pk) => writableSlots.has(Number(pk.slot)) && !prev.some((s) => s.box === Number(boxId) && s.slot === Number(pk.slot)))
+                                    .map((pk) => ({ box: Number(boxId), slot: Number(pk.slot), pokemon: pk })),
+                            ])}
+                            className="mt-2 inline-flex items-center gap-1 rounded-lg bg-slate-700/50 px-2 py-1 text-[10px] font-bold uppercase tracking-widest text-slate-300 hover:bg-amber-500/80 hover:text-white"
+                        >
+                            <CheckSquare size={12} /> Select all to move
+                        </button>
+                    )}
                 </div>
 
                 <button
@@ -112,6 +151,25 @@ const PCGrid = ({ client, boxId, onBoxChange, onEditPokemon, onAddPokemon, onRel
                 </button>
             </div>
 
+            {moving && (
+                <div className="flex items-center justify-between gap-3 rounded-2xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+                    <span>
+                        {selection.length === 1 ? (
+                            <>Moving <b>{selection[0].pokemon.nickname || 'Pokemon'}</b> from {getBoxLabel(selection[0].box)} slot {selection[0].slot}. Pick a slot in any box (occupied slots swap), or select more with ⇄.</>
+                        ) : (
+                            <><b>{selection.length}</b> Pokemon selected. Click a slot in any box: they fill its free slots from there and overflow into the next boxes.</>
+                        )}
+                    </span>
+                    <button
+                        type="button"
+                        onClick={() => setSelection([])}
+                        className="flex items-center gap-1 rounded-lg bg-slate-900/60 px-2 py-1 text-xs font-bold hover:bg-slate-800"
+                    >
+                        <X size={13} /> Cancel
+                    </button>
+                </div>
+            )}
+
             <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3">
                 {loading ? (
                     <div className="col-span-full py-20 text-center text-slate-500 animate-pulse">
@@ -120,10 +178,20 @@ const PCGrid = ({ client, boxId, onBoxChange, onEditPokemon, onAddPokemon, onRel
                 ) : (
                     normalizedSlots.map(({ slot, pokemon: pk }) => {
                         const writable = writableSlots.has(slot);
+                        const isMoveSource = isSelected(slot);
                         return (
                         <div
                             key={slot}
                             onClick={() => {
+                                if (moving) {
+                                    if (!writable) return;
+                                    if (isMoveSource) {
+                                        toggleSelected(slot, pk);
+                                    } else {
+                                        dropSelection(slot);
+                                    }
+                                    return;
+                                }
                                 if (!pk) {
                                     if (!writable) {
                                         return;
@@ -134,7 +202,11 @@ const PCGrid = ({ client, boxId, onBoxChange, onEditPokemon, onAddPokemon, onRel
                                 onEditPokemon(pk);
                             }}
                             className={`group p-2.5 sm:p-3 rounded-2xl border transition-all ${
-                                pk
+                                isMoveSource
+                                    ? 'bg-amber-500/10 border-amber-400/60 cursor-pointer'
+                                    : moving && writable
+                                    ? `${pk ? 'bg-[#1e293b]' : 'bg-slate-900/40 border-dashed'} border-white/10 hover:border-amber-400/60 cursor-pointer`
+                                    : pk
                                     ? 'bg-[#1e293b] border-white/5 hover:border-blue-500/50 cursor-pointer'
                                     : writable
                                         ? 'bg-slate-900/40 border-dashed border-white/10 hover:border-emerald-400/40 cursor-pointer'
@@ -154,6 +226,25 @@ const PCGrid = ({ client, boxId, onBoxChange, onEditPokemon, onAddPokemon, onRel
                                                 }
                                             }}
                                         />
+                                        {writable && onMovePokemon && (
+                                            <button
+                                                type="button"
+                                                title={`${isMoveSource ? 'Unselect' : 'Move'} ${pk.nickname || 'Pokemon'}`}
+                                                aria-label={`${isMoveSource ? 'Unselect' : 'Move'} ${pk.nickname || 'Pokemon'}`}
+                                                aria-pressed={isMoveSource}
+                                                onClick={(event) => {
+                                                    event.stopPropagation();
+                                                    toggleSelected(slot, pk);
+                                                }}
+                                                className={`absolute left-1 top-1 rounded-lg p-1.5 transition-all focus:opacity-100 ${
+                                                    isMoveSource
+                                                        ? 'bg-amber-500/90 text-white opacity-100'
+                                                        : 'bg-slate-950/80 text-slate-400 opacity-0 hover:bg-amber-500/90 hover:text-white group-hover:opacity-100'
+                                                }`}
+                                            >
+                                                <ArrowRightLeft size={13} />
+                                            </button>
+                                        )}
                                         <button
                                             type="button"
                                             title={`Release ${pk.nickname || 'Pokemon'}`}
