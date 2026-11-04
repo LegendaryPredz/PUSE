@@ -22,6 +22,7 @@ import {
     ListFilter,
 } from 'lucide-react';
 import { createApiClient, getInitialRuntimeMode, persistRuntimeMode, RUNTIME_MODES } from './services/apiClient.js';
+import { DRIVE_ENABLED, loadDrive, pickDriveFile } from './services/googleDrive.js';
 import { bulkMovePc } from './services/pcBulkMove.js';
 import { getExpAtLevel, getSpeciesGrowthRate } from './core/growth.js';
 
@@ -105,6 +106,18 @@ const App = () => {
             // A retry must fire change even when the same file is selected
             // after correcting the game version or runtime mode.
             input.value = '';
+        }
+    };
+
+    useEffect(() => {
+        if (DRIVE_ENABLED) loadDrive().catch(() => {});
+    }, []);
+
+    const handleDriveUpload = async () => {
+        try {
+            await uploadSaveFile(await pickDriveFile());
+        } catch (err) {
+            alert(err.message || 'Google Drive upload failed.');
         }
     };
 
@@ -654,11 +667,15 @@ const App = () => {
                                         <p className="mt-2 text-xs text-slate-400">Radical Red requires explicit version selection. Confirm that your game is version 4.1.</p>
                                         <div className="mt-4 rounded-2xl border border-dashed border-blue-400/40 bg-slate-900/60 px-4 py-6 text-center">
                                             <p className="text-xs text-slate-300">Drag and drop your file here</p>
-                                            <p className="mt-1 text-[11px] text-slate-500">Accepted: <span className="font-mono">.sav</span> and <span className="font-mono">.srm</span></p>
+                                            <p className="mt-1 text-[11px] text-slate-500">Accepted: <span className="font-mono">.sav .srm .sa1–.sa4 .saveram .bin</span></p>
                                             <label className="mt-4 inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-500 px-5 py-2.5 rounded-xl cursor-pointer font-bold transition-all shadow-lg active:scale-95 text-xs md:text-sm">
                                                 SELECT SAVE FILE <ArrowRight size={14} />
                                                 <input type="file" className="hidden" onChange={handleUpload} accept=".sav,.srm,.sa1,.sa2,.sa3,.sa4,.saveram,.bin" />
                                             </label>
+                                            {DRIVE_ENABLED && <button type="button" onClick={handleDriveUpload}
+                                                className="mt-4 ml-2 inline-flex items-center gap-2 border border-blue-400/60 hover:bg-blue-500/20 px-5 py-2.5 rounded-xl font-bold transition-all active:scale-95 text-xs md:text-sm">
+                                                GOOGLE DRIVE <ArrowRight size={14} />
+                                            </button>}
                                         </div>
 
                                         <p className="mt-4 text-[11px] text-slate-400 leading-relaxed">

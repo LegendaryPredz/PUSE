@@ -39,6 +39,8 @@ jobs:
         env:
           VITE_RUNTIME_MODE: local
           VITE_BASE_PATH: /${{ github.event.repository.name }}/
+          VITE_GOOGLE_CLIENT_ID: ${{ vars.VITE_GOOGLE_CLIENT_ID }}
+          VITE_GOOGLE_API_KEY: ${{ vars.VITE_GOOGLE_API_KEY }}
 
       - name: SPA fallback
         run: cp dist/index.html dist/404.html
