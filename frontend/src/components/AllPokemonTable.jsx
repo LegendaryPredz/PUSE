@@ -4,6 +4,7 @@ import { NATURES } from '../core/showdownImport.js';
 import { POKEMON_ICON_FALLBACK_URL } from '../core/iconResolver.js';
 import { ALL_POKEMON_BOXES } from '../services/allPokemon.js';
 import { SORTS, ivTotal } from '../services/pokemonSort.js';
+import { selectExtras } from '../services/cleanup.js';
 import { protectionReasons } from '../services/protection.js';
 import { buildRoster, rosterMarkdown, rosterShowdown } from '../services/rosterExport.js';
 
@@ -122,7 +123,8 @@ export default function AllPokemonTable({ client, onReleaseMany, favorites = new
     const [itemNames, setItemNames] = useState(new Map());
     const [moveNames, setMoveNames] = useState(new Map());
     const [selectedPcKeys, setSelectedPcKeys] = useState(new Set());
-    const [copyStatus, setCopyStatus] = useState('');
+    const [status, setStatus] = useState('');
+    const [keepBest, setKeepBest] = useState(1);
 
     useEffect(() => {
         let cancelled = false;
@@ -187,14 +189,20 @@ export default function AllPokemonTable({ client, onReleaseMany, favorites = new
         anchor.remove();
         setTimeout(() => URL.revokeObjectURL(url), 0);
     };
+    const selectCleanupExtras = () => {
+        const keep = Math.max(1, Math.floor(Number(keepBest)) || 1);
+        const extras = selectExtras(pokemon, keep, (row) => protectionReasons(row, favorites, protections).length > 0);
+        setSelectedPcKeys(new Set(extras));
+        setStatus(`Selected ${extras.length} extra Pokémon, keeping the best ${keep} of each species. Review, then Release selected.`);
+    };
     const copyShowdown = async () => {
         const roster = buildRoster(pokemon, selectedPcKeys, itemNames, moveNames);
         if (!roster.pokemon.length) return;
         try {
             await navigator.clipboard.writeText(rosterShowdown(roster));
-            setCopyStatus(`Copied ${roster.pokemon.length} Showdown sets`);
+            setStatus(`Copied ${roster.pokemon.length} Showdown sets`);
         } catch {
-            setCopyStatus('Copy failed: clipboard access was blocked');
+            setStatus('Copy failed: clipboard access was blocked');
         }
     };
 
@@ -269,7 +277,15 @@ export default function AllPokemonTable({ client, onReleaseMany, favorites = new
                 {onReleaseMany && <button type="button" disabled={!selectedCount}
                     onClick={() => onReleaseMany(pokemon.filter((row) => row.source === 'pc' && selectedPcKeys.has(row.rosterKey)).map(({ box, slot }) => ({ box, slot })))}
                     className="rounded-lg bg-red-600/80 px-3 py-2 font-semibold text-white hover:bg-red-500 disabled:opacity-50">Release selected ({selectedCount})</button>}
-                <span className="w-full text-right text-xs text-blue-200" aria-live="polite">{copyStatus}</span>
+                <span className="flex w-full flex-wrap items-center justify-end gap-2 text-slate-300">
+                    Keep best
+                    <input type="number" min="1" value={keepBest} aria-label="Copies to keep per species" onChange={(event) => setKeepBest(event.target.value)}
+                        className="w-16 rounded-lg border border-slate-600 bg-slate-900 px-2 py-1 text-slate-100" />
+                    per species
+                    <button type="button" onClick={selectCleanupExtras}
+                        className="rounded-lg border border-amber-400/50 px-3 py-2 font-semibold text-amber-200 hover:bg-amber-500/20">Select extras</button>
+                </span>
+                <span className="w-full text-right text-xs text-blue-200" aria-live="polite">{status}</span>
             </div>}
 
             {loading ? <p className="py-12 text-center text-slate-400" role="status">Reading Party and PC boxes…</p> : null}

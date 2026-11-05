@@ -50,3 +50,20 @@ export function saveStored(key, value) {
         // Storage can be blocked; the setting just won't persist.
     }
 }
+
+const FAVORITES_FORMAT = 'puse-favorites-v1';
+
+export const favoritesToJson = (favorites) => JSON.stringify({ format: FAVORITES_FORMAT, pids: [...favorites] }, null, 2);
+
+export function parseFavorites(text) {
+    let data = null;
+    try {
+        data = JSON.parse(text);
+    } catch {
+        // falls through to the format error below
+    }
+    if (data?.format !== FAVORITES_FORMAT || !Array.isArray(data.pids) || !data.pids.every(Number.isInteger)) {
+        throw new Error('Not a PUSE favorites file');
+    }
+    return data.pids;
+}

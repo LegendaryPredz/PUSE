@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { ArrowRightLeft, CheckSquare, ChevronLeft, ChevronRight, Package, Star, Trash2, X } from 'lucide-react';
 import { SORTS } from '../services/pokemonSort.js';
 import { POKEMON_ICON_FALLBACK_URL } from '../core/iconResolver.js';
@@ -20,12 +20,33 @@ const PCGrid = ({ client, boxId, onBoxChange, onEditPokemon, onAddPokemon, onRel
     // Picked-up Pokemon ({ box, slot, pokemon }); survives box changes so they can be dropped into any box.
     const [selection, setSelection] = useState([]);
     const moving = selection.length > 0;
+    // Slot of the last ⇄ click in this box: the anchor for shift-click ranges.
+    const lastPicked = useRef(null);
     const isSelected = (slot) => selection.some((s) => s.box === Number(boxId) && s.slot === slot);
     const toggleSelected = (slot, pk) => setSelection((prev) => (
         prev.some((s) => s.box === Number(boxId) && s.slot === slot)
             ? prev.filter((s) => !(s.box === Number(boxId) && s.slot === slot))
             : [...prev, { box: Number(boxId), slot, pokemon: pk }]
     ));
+    const pickSlot = (slot, pk, shift) => {
+        const anchor = lastPicked.current;
+        lastPicked.current = { box: Number(boxId), slot };
+        // A range only extends a live selection; after Cancel/drop the old anchor is stale.
+        if (!shift || !selection.length || anchor?.box !== Number(boxId)) {
+            toggleSelected(slot, pk);
+            return;
+        }
+        const [lo, hi] = [Math.min(anchor.slot, slot), Math.max(anchor.slot, slot)];
+        setSelection((prev) => [
+            ...prev,
+            ...pokemon
+                .filter((p) => {
+                    const s = Number(p.slot);
+                    return s >= lo && s <= hi && writableSlots.has(s) && !prev.some((x) => x.box === Number(boxId) && x.slot === s);
+                })
+                .map((p) => ({ box: Number(boxId), slot: Number(p.slot), pokemon: p })),
+        ]);
+    };
     const fetchBox = useCallback(async (id) => {
         setLoading(true);
         try {
@@ -167,9 +188,9 @@ const PCGrid = ({ client, boxId, onBoxChange, onEditPokemon, onAddPokemon, onRel
                 <div className="flex items-center justify-between gap-3 rounded-2xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
                     <span>
                         {selection.length === 1 ? (
-                            <>Moving <b>{selection[0].pokemon.nickname || 'Pokemon'}</b> from {getBoxLabel(selection[0].box)} slot {selection[0].slot}. Pick a slot in any box (occupied slots swap), or select more with ⇄.</>
+                            <>Moving <b>{selection[0].pokemon.nickname || 'Pokemon'}</b> from {getBoxLabel(selection[0].box)} slot {selection[0].slot}. Pick a slot in any box (occupied slots swap), or select more with ⇄ (shift-click for a range).</>
                         ) : (
-                            <><b>{selection.length}</b> Pokemon selected. Click a slot in any box: they fill its free slots from there and overflow into the next boxes.</>
+                            <><b>{selection.length}</b> Pokemon selected. Click a slot in any box: they fill its free slots from there and overflow into the next boxes. Shift-click ⇄ to add a range.</>
                         )}
                     </span>
                     <div className="flex shrink-0 items-center gap-2">
@@ -271,7 +292,7 @@ const PCGrid = ({ client, boxId, onBoxChange, onEditPokemon, onAddPokemon, onRel
                                                 aria-pressed={isMoveSource}
                                                 onClick={(event) => {
                                                     event.stopPropagation();
-                                                    toggleSelected(slot, pk);
+                                                    pickSlot(slot, pk, event.shiftKey);
                                                 }}
                                                 className={`absolute left-1 top-1 rounded-lg p-1.5 transition-all focus:opacity-100 ${
                                                     isMoveSource

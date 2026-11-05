@@ -25,7 +25,7 @@ import { createApiClient, getInitialRuntimeMode, persistRuntimeMode, RUNTIME_MOD
 import { DRIVE_ENABLED, loadDrive, pickDriveFile } from './services/googleDrive.js';
 import { bulkMovePc } from './services/pcBulkMove.js';
 import { sortPcBox } from './services/pcSort.js';
-import { loadStored, protectionReasons, saveStored } from './services/protection.js';
+import { favoritesToJson, loadStored, parseFavorites, protectionReasons, saveStored } from './services/protection.js';
 import { getExpAtLevel, getSpeciesGrowthRate } from './core/growth.js';
 
 const PartyGrid = lazy(() => import('./components/PartyGrid'));
@@ -419,6 +419,17 @@ const App = () => {
 
             await client.editPcFull(payload);
             await client.saveAll();
+            // Editing nature, gender or shiny rewrites the PID, so carry a favorite over to the new one.
+            if (favorites.has(original.pid)) {
+                try {
+                    const saved = (await client.getPcBox(updatedPk.box)).find((pk) => Number(pk.slot) === Number(updatedPk.slot));
+                    if (saved && saved.pid !== original.pid) {
+                        editFavorites((next) => { next.delete(original.pid); next.add(saved.pid); });
+                    }
+                } catch {
+                    // The edit itself is saved; worst case the star has to be re-applied.
+                }
+            }
             setSelectedPokemon(null);
             setRefreshKey(prev => prev + 1);
             alert("PC Box updated successfully!");
@@ -439,12 +450,32 @@ const App = () => {
         }
     };
 
-    const updateFavorites = (pids, on) => setFavorites((prev) => {
+    const editFavorites = (change) => setFavorites((prev) => {
         const next = new Set(prev);
-        pids.forEach((pid) => (on ? next.add(pid) : next.delete(pid)));
+        change(next);
         saveStored(FAVORITES_KEY, [...next]);
         return next;
     });
+    const updateFavorites = (pids, on) => editFavorites((next) => pids.forEach((pid) => (on ? next.add(pid) : next.delete(pid))));
+
+    const exportFavorites = () => {
+        const url = URL.createObjectURL(new Blob([favoritesToJson(favorites)], { type: 'application/json' }));
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = 'puse-favorites.json';
+        anchor.click();
+        setTimeout(() => URL.revokeObjectURL(url), 0);
+    };
+
+    const importFavorites = async (file) => {
+        try {
+            const pids = parseFavorites(await file.text());
+            updateFavorites(pids, true);
+            alert(`Imported ${pids.length} favorites.`);
+        } catch (err) {
+            alert(err?.message || 'Could not read that favorites file.');
+        }
+    };
 
     const updateProtections = (next) => {
         setProtections(next);
@@ -1036,7 +1067,8 @@ const App = () => {
                             )}
                             {(activeTab === 'pc' || activeTab === 'all') && (
                                 <ReleaseProtections enabled={protections} onChange={updateProtections}
-                                    undoCount={lastRelease.length} onUndo={handleUndoRelease} />
+                                    undoCount={lastRelease.length} onUndo={handleUndoRelease}
+                                    favoritesCount={favorites.size} onExportFavorites={exportFavorites} onImportFavorites={importFavorites} />
                             )}
                             {activeTab === 'pc' && <PCGrid
                                 key={`pc-${refreshKey}`}
