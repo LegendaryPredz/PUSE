@@ -9,7 +9,7 @@ function getBoxLabel(boxId) {
     return Number(boxId) === 26 ? 'Preset' : `Box ${boxId}`;
 }
 
-const PCGrid = ({ client, boxId, onBoxChange, onEditPokemon, onAddPokemon, onReleasePokemon, onMovePokemon }) => {
+const PCGrid = ({ client, boxId, onBoxChange, onEditPokemon, onAddPokemon, onReleasePokemon, onMovePokemon, onReleaseMany }) => {
     const VISIBLE_BOX_SEQUENCE = useMemo(() => isRadicalRed() ? Array.from({length: PROFILE.storage.pc.box_count}, (_, i) => i + 1) : [...Array.from({length:24}, (_, i) => i + 1),26], []);
     const [pokemon, setPokemon] = useState([]);
     const [writableSlots, setWritableSlots] = useState(new Set());
@@ -160,13 +160,28 @@ const PCGrid = ({ client, boxId, onBoxChange, onEditPokemon, onAddPokemon, onRel
                             <><b>{selection.length}</b> Pokemon selected. Click a slot in any box: they fill its free slots from there and overflow into the next boxes.</>
                         )}
                     </span>
-                    <button
-                        type="button"
-                        onClick={() => setSelection([])}
-                        className="flex items-center gap-1 rounded-lg bg-slate-900/60 px-2 py-1 text-xs font-bold hover:bg-slate-800"
-                    >
-                        <X size={13} /> Cancel
-                    </button>
+                    <div className="flex shrink-0 items-center gap-2">
+                        {onReleaseMany && (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    const targets = selection.map(({ box, slot }) => ({ box, slot }));
+                                    setSelection([]);
+                                    onReleaseMany(targets);
+                                }}
+                                className="flex items-center gap-1 rounded-lg bg-red-600/80 px-2 py-1 text-xs font-bold text-white hover:bg-red-500"
+                            >
+                                <Trash2 size={13} /> Release {selection.length}
+                            </button>
+                        )}
+                        <button
+                            type="button"
+                            onClick={() => setSelection([])}
+                            className="flex items-center gap-1 rounded-lg bg-slate-900/60 px-2 py-1 text-xs font-bold hover:bg-slate-800"
+                        >
+                            <X size={13} /> Cancel
+                        </button>
+                    </div>
                 </div>
             )}
 

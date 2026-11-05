@@ -444,6 +444,27 @@ const App = () => {
         }
     };
 
+    const handleReleaseManyPC = async (targets) => {
+        if (!window.confirm(`Release ${targets.length} Pokemon? This can't be undone once you download the save.`)) return;
+        let released = 0;
+        let lastError;
+        for (const { box, slot } of targets) {
+            try {
+                await client.releasePc({ box, slot });
+                released++;
+            } catch (err) {
+                lastError = err;
+            }
+        }
+        try {
+            if (released) await client.saveAll();
+        } catch (err) {
+            lastError = err;
+        }
+        setRefreshKey(prev => prev + 1);
+        if (lastError) alert(`Released ${released} of ${targets.length}. ${lastError?.message || 'Some failed.'}`);
+    };
+
     const handleMovePC = async (payload) => {
         try {
             if (payload.sources) {
@@ -962,6 +983,7 @@ const App = () => {
                                 onAddPokemon={(target) => setPcInsertTarget(target)}
                                 onReleasePokemon={handleReleasePC}
                                 onMovePokemon={handleMovePC}
+                                onReleaseMany={handleReleaseManyPC}
                             />}
                             {supports('roster_export') && activeTab === 'all' && <AllPokemonTable key={`all-${refreshKey}`} client={client} />}
                             {activeTab === 'bag' && <BagView client={client} initialUnsaved={bagHasUnsavedChanges} onDirtyChange={setBagHasUnsavedChanges} />}
