@@ -985,7 +985,7 @@ const App = () => {
                                 onMovePokemon={handleMovePC}
                                 onReleaseMany={handleReleaseManyPC}
                             />}
-                            {supports('roster_export') && activeTab === 'all' && <AllPokemonTable key={`all-${refreshKey}`} client={client} />}
+                            {supports('roster_export') && activeTab === 'all' && <AllPokemonTable key={`all-${refreshKey}`} client={client} onReleaseMany={handleReleaseManyPC} />}
                             {activeTab === 'bag' && <BagView client={client} initialUnsaved={bagHasUnsavedChanges} onDirtyChange={setBagHasUnsavedChanges} />}
                             {supports('pokedex') && activeTab === 'dex' && <LivingDexPanel key={`dex-${refreshKey}`} client={client} />}
                         </Suspense>

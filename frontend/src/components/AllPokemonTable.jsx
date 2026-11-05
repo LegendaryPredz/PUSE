@@ -101,7 +101,7 @@ function PokemonRow({ pokemon, expanded, onToggle, getPokemonIconUrl, itemNames,
     );
 }
 
-export default function AllPokemonTable({ client }) {
+export default function AllPokemonTable({ client, onReleaseMany }) {
     const [pokemon, setPokemon] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
@@ -190,7 +190,7 @@ export default function AllPokemonTable({ client }) {
             <header className="flex flex-wrap items-end justify-between gap-3">
                 <div>
                     <h2 id="all-pokemon-heading" className="text-2xl font-bold tracking-tight text-slate-100">All Pokémon</h2>
-                    <p className="mt-1 text-sm text-slate-400">Inspect occupied Party and PC slots in one place. This view does not edit your save.</p>
+                    <p className="mt-1 text-sm text-slate-400">Inspect occupied Party and PC slots in one place. Select PC Pokémon to export or release.</p>
                 </div>
                 <p className="font-mono text-sm text-blue-200" aria-live="polite">
                     {loading ? 'Reading save…' : `${partyCount} Party / ${pokemon.length - partyCount} PC`}
@@ -237,6 +237,9 @@ export default function AllPokemonTable({ client }) {
                     className="rounded-lg border border-blue-500 px-3 py-2 font-semibold text-blue-100 hover:bg-blue-500/20 disabled:opacity-50">Export Markdown</button>
                 <button type="button" onClick={copyShowdown} disabled={!partyCount && !selectedCount}
                     className="rounded-lg border border-blue-500 px-3 py-2 font-semibold text-blue-100 hover:bg-blue-500/20 disabled:opacity-50">Copy Showdown</button>
+                {onReleaseMany && <button type="button" disabled={!selectedCount}
+                    onClick={() => onReleaseMany(pokemon.filter((row) => row.source === 'pc' && selectedPcKeys.has(row.rosterKey)).map(({ box, slot }) => ({ box, slot })))}
+                    className="rounded-lg bg-red-600/80 px-3 py-2 font-semibold text-white hover:bg-red-500 disabled:opacity-50">Release selected ({selectedCount})</button>}
                 <span className="w-full text-right text-xs text-blue-200" aria-live="polite">{copyStatus}</span>
             </div>}
 
