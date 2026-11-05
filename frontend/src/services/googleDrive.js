@@ -1,4 +1,4 @@
-// Google Drive Picker for loading a save. Enabled only when both env vars are set at build time.
+// Google Drive Picker for loading a save, and upload for saving the edited one. Enabled only when both env vars are set at build time.
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const API_KEY = import.meta.env.VITE_GOOGLE_API_KEY;
 export const DRIVE_ENABLED = Boolean(CLIENT_ID && API_KEY);
@@ -64,4 +64,21 @@ export async function pickDriveFile() {
     });
     if (!response.ok) throw new Error(`Google Drive download failed (${response.status})`);
     return new File([await response.blob()], doc.name);
+}
+
+// Uploads as a new file: drive.file scope only lets the app touch files it creates or the user picks.
+export async function saveToDrive(file) {
+    await loadDrive();
+    const token = await requestToken();
+    if (!token) return null;
+    const body = new FormData();
+    body.append('metadata', new Blob([JSON.stringify({ name: file.name })], { type: 'application/json' }));
+    body.append('file', file);
+    const response = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=name', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body,
+    });
+    if (!response.ok) throw new Error(`Google Drive upload failed (${response.status})`);
+    return (await response.json()).name;
 }

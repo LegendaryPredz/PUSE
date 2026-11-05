@@ -214,6 +214,13 @@ const backendClient = {
         await backendJson('/save-all', { method: 'POST' });
         window.location.href = `${API_BASE}/download`;
     },
+    async getSaveFile() {
+        await backendJson('/save-all', { method: 'POST' });
+        const response = await fetch(`${API_BASE}/download`);
+        if (!response.ok) throw new Error(`Download failed (${response.status})`);
+        const name = /filename="?([^";]+)"?/.exec(response.headers.get('content-disposition') || '')?.[1] || 'edited_save.sav';
+        return new File([await response.blob()], name);
+    },
     getSaveReport() {
         return backendJson('/save-report');
     },
@@ -568,16 +575,15 @@ const localClient = {
             bp: readBp(nextBuffer),
         };
     },
-    async downloadSave() {
-        const {
-            getBuffer,
-            getFilename,
-            getPcContext,
-            saveAll,
-        } = await getLocalCoreModules();
+    async getSaveFile() {
+        const { getBuffer, getFilename, getPcContext, saveAll } = await getLocalCoreModules();
         const finalized = new Uint8Array(getBuffer());
         saveAll(finalized, getPcContext());
-        downloadBlob(new Blob([finalized], { type: 'application/octet-stream' }), getFilename());
+        return new File([finalized], getFilename(), { type: 'application/octet-stream' });
+    },
+    async downloadSave() {
+        const file = await this.getSaveFile();
+        downloadBlob(file, file.name);
     },
     async getSaveReport() {
         const { getBuffer, getOriginalBuffer, getPcContext, saveAll, buildSaveReport } = await getLocalCoreModules();

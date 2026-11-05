@@ -22,7 +22,7 @@ import {
     ListFilter,
 } from 'lucide-react';
 import { createApiClient, getInitialRuntimeMode, persistRuntimeMode, RUNTIME_MODES } from './services/apiClient.js';
-import { DRIVE_ENABLED, loadDrive, pickDriveFile } from './services/googleDrive.js';
+import { DRIVE_ENABLED, loadDrive, pickDriveFile, saveToDrive } from './services/googleDrive.js';
 import { bulkMovePc } from './services/pcBulkMove.js';
 import { sortPcBox } from './services/pcSort.js';
 import { favoritesToJson, loadStored, parseFavorites, protectionReasons, saveStored } from './services/protection.js';
@@ -627,6 +627,20 @@ const App = () => {
         }
     };
 
+    const confirmSaveToDrive = async () => {
+        if (!saveReport) return;
+        try {
+            const name = await saveToDrive(await client.getSaveFile());
+            if (name) {
+                setShowSaveReport(false);
+                alert(`Saved "${name}" to your Google Drive.`);
+            }
+        } catch (err) {
+            console.error(err);
+            setSaveReportError(err.message || 'Google Drive save failed. Your in-memory save is still loaded.');
+        }
+    };
+
     const handleRestartApp = () => {
         window.location.reload();
     };
@@ -1138,6 +1152,8 @@ const App = () => {
                         </div>}
                         <div className="mt-6 flex justify-end gap-2">
                             <button type="button" onClick={() => setShowSaveReport(false)} className="rounded-lg border border-slate-600 px-4 py-2 text-slate-100 hover:bg-slate-800">Cancel</button>
+                            {DRIVE_ENABLED && <button type="button" onClick={confirmSaveToDrive} disabled={!saveReport || saveReportLoading}
+                                className="rounded-lg border border-blue-400/60 px-4 py-2 font-semibold text-slate-100 hover:bg-blue-500/20 disabled:opacity-50">Save to Google Drive</button>}
                             <button type="button" onClick={confirmDownload} disabled={!saveReport || saveReportLoading}
                                 className="rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white hover:bg-blue-500 disabled:opacity-50">Download {saveExt.toUpperCase()}</button>
                         </div>
