@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { ArrowRightLeft, CheckSquare, ChevronLeft, ChevronRight, Package, Trash2, X } from 'lucide-react';
+import { ArrowRightLeft, CheckSquare, ChevronLeft, ChevronRight, Package, Star, Trash2, X } from 'lucide-react';
+import { SORTS } from '../services/pokemonSort.js';
 import { POKEMON_ICON_FALLBACK_URL } from '../core/iconResolver.js';
 
 import { PROFILE, isRadicalRed } from '../core/profile.js';
@@ -9,12 +10,13 @@ function getBoxLabel(boxId) {
     return Number(boxId) === 26 ? 'Preset' : `Box ${boxId}`;
 }
 
-const PCGrid = ({ client, boxId, onBoxChange, onEditPokemon, onAddPokemon, onReleasePokemon, onMovePokemon, onReleaseMany }) => {
+const PCGrid = ({ client, boxId, onBoxChange, onEditPokemon, onAddPokemon, onReleasePokemon, onMovePokemon, onReleaseMany, favorites, onFavorite, onSortBox }) => {
     const VISIBLE_BOX_SEQUENCE = useMemo(() => isRadicalRed() ? Array.from({length: PROFILE.storage.pc.box_count}, (_, i) => i + 1) : [...Array.from({length:24}, (_, i) => i + 1),26], []);
     const [pokemon, setPokemon] = useState([]);
     const [writableSlots, setWritableSlots] = useState(new Set());
     const [loading, setLoading] = useState(false);
     const [pcLoaded, setPcLoaded] = useState(false);
+    const [sortKey, setSortKey] = useState('species');
     // Picked-up Pokemon ({ box, slot, pokemon }); survives box changes so they can be dropped into any box.
     const [selection, setSelection] = useState([]);
     const moving = selection.length > 0;
@@ -141,6 +143,16 @@ const PCGrid = ({ client, boxId, onBoxChange, onEditPokemon, onAddPokemon, onRel
                             <CheckSquare size={12} /> Select all to move
                         </button>
                     )}
+                    {onSortBox && pokemon.length > 1 && (
+                        <div className="mt-2 inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-slate-300">
+                            <select aria-label="Sort box by" value={sortKey} onChange={(event) => setSortKey(event.target.value)}
+                                className="rounded-lg bg-slate-700/50 px-2 py-1 text-[10px] uppercase tracking-widest text-slate-200">
+                                {Object.entries(SORTS).map(([key, { label }]) => <option key={key} value={key}>{label}</option>)}
+                            </select>
+                            <button type="button" onClick={() => onSortBox(boxId, sortKey)}
+                                className="rounded-lg bg-slate-700/50 px-2 py-1 hover:bg-blue-500/80 hover:text-white">Sort box</button>
+                        </div>
+                    )}
                 </div>
 
                 <button
@@ -161,6 +173,16 @@ const PCGrid = ({ client, boxId, onBoxChange, onEditPokemon, onAddPokemon, onRel
                         )}
                     </span>
                     <div className="flex shrink-0 items-center gap-2">
+                        {onFavorite && [true, false].map((on) => (
+                            <button
+                                key={String(on)}
+                                type="button"
+                                onClick={() => onFavorite(selection.map(({ pokemon: pk }) => pk.pid), on)}
+                                className="flex items-center gap-1 rounded-lg bg-slate-900/60 px-2 py-1 text-xs font-bold hover:bg-slate-800"
+                            >
+                                <Star size={13} fill={on ? 'currentColor' : 'none'} /> {on ? 'Favorite' : 'Unfavorite'}
+                            </button>
+                        ))}
                         {onReleaseMany && (
                             <button
                                 type="button"
@@ -258,6 +280,25 @@ const PCGrid = ({ client, boxId, onBoxChange, onEditPokemon, onAddPokemon, onRel
                                                 }`}
                                             >
                                                 <ArrowRightLeft size={13} />
+                                            </button>
+                                        )}
+                                        {onFavorite && (
+                                            <button
+                                                type="button"
+                                                title={`${favorites?.has(pk.pid) ? 'Unfavorite' : 'Favorite'} ${pk.nickname || 'Pokemon'}`}
+                                                aria-label={`${favorites?.has(pk.pid) ? 'Unfavorite' : 'Favorite'} ${pk.nickname || 'Pokemon'}`}
+                                                aria-pressed={favorites?.has(pk.pid) || false}
+                                                onClick={(event) => {
+                                                    event.stopPropagation();
+                                                    onFavorite([pk.pid], !favorites?.has(pk.pid));
+                                                }}
+                                                className={`absolute bottom-1 right-1 rounded-lg p-1.5 transition-all focus:opacity-100 ${
+                                                    favorites?.has(pk.pid)
+                                                        ? 'bg-slate-950/80 text-amber-300 opacity-100'
+                                                        : 'bg-slate-950/80 text-slate-400 opacity-0 hover:text-amber-300 group-hover:opacity-100'
+                                                }`}
+                                            >
+                                                <Star size={13} fill={favorites?.has(pk.pid) ? 'currentColor' : 'none'} />
                                             </button>
                                         )}
                                         <button

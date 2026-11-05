@@ -1209,6 +1209,7 @@ export function releasePcMon(context, payload) {
     } else {
         buffer.set(empty, offset);
     }
+    return { raw: Array.from(raw, (b) => b.toString(16).padStart(2, '0')).join('') };
 }
 
 function readPcSlotRaw(context, box, slot) {
@@ -1262,6 +1263,32 @@ export function movePcMon(context, payload) {
     writePcSlotRaw(context, toBox, toSlot, fromRaw);
     writePcSlotRaw(context, fromBox, fromSlot, swapped ? toRaw : new Uint8Array(MON_SIZE_PC));
     return { box: toBox, slot: toSlot, swapped };
+}
+
+// Puts a record returned by releasePcMon back into an empty slot (undo for release).
+export function restorePcMon(context, payload) {
+    requireCapability('pc_insert');
+    const box = Number(payload?.box);
+    const slot = Number(payload?.slot);
+    if (!Number.isInteger(box) || box < 1 || box > 26 || !Number.isInteger(slot) || slot < 1 || slot > 30) {
+        throw new Error('Invalid PC box or slot');
+    }
+    if (!isPcSlotWritable(context, box, slot)) {
+        throw new Error('Slot not writable in this save layout');
+    }
+    const hex = String(payload?.raw || '');
+    if (!/^(?:[0-9a-f]{2}){58}$/i.test(hex)) {
+        throw new Error('Invalid Pokemon record');
+    }
+    const raw = Uint8Array.from(hex.match(/../g), (h) => parseInt(h, 16));
+    if (ru16(raw, OFF_SPECIES) === 0) {
+        throw new Error('Invalid Pokemon record');
+    }
+    if (ru16(readPcSlotRaw(context, box, slot), OFF_SPECIES) !== 0) {
+        throw new Error('Target slot is occupied');
+    }
+    writePcSlotRaw(context, box, slot, raw);
+    return { box, slot };
 }
 
 export function editPcMonFull(context, payload, speciesMap = null) {

@@ -24,9 +24,12 @@ import {
 import { createApiClient, getInitialRuntimeMode, persistRuntimeMode, RUNTIME_MODES } from './services/apiClient.js';
 import { DRIVE_ENABLED, loadDrive, pickDriveFile } from './services/googleDrive.js';
 import { bulkMovePc } from './services/pcBulkMove.js';
+import { sortPcBox } from './services/pcSort.js';
+import { loadStored, protectionReasons, saveStored } from './services/protection.js';
 import { getExpAtLevel, getSpeciesGrowthRate } from './core/growth.js';
 
 const PartyGrid = lazy(() => import('./components/PartyGrid'));
+const ReleaseProtections = lazy(() => import('./components/ReleaseProtections.jsx'));
 const PCGrid = lazy(() => import('./components/PCGrid'));
 const AllPokemonTable = lazy(() => import('./components/AllPokemonTable.jsx'));
 const BagView = lazy(() => import('./components/BagView.jsx'));
@@ -37,6 +40,8 @@ const PokemonEditorModal = lazy(() =>
 const AddPcPokemonModal = lazy(() => import('./components/AddPcPokemonModal.jsx'));
 
 const LEGIT_MODE_STORAGE_KEY = 'puse_legit_mode';
+const FAVORITES_KEY = 'puse_favorites';
+const PROTECTIONS_KEY = 'puse_release_protections';
 
 const getInitialLegitMode = () => {
     try {
@@ -63,6 +68,10 @@ const App = () => {
     const [showSaveReport, setShowSaveReport] = useState(false);
     const [moneyInput, setMoneyInput] = useState('0');
     const [bpInput, setBpInput] = useState('0');
+    // Raw records from the last release, kept in memory only so it can be undone.
+    const [lastRelease, setLastRelease] = useState([]);
+    const [favorites, setFavorites] = useState(() => new Set(loadStored(FAVORITES_KEY, [])));
+    const [protections, setProtections] = useState(() => loadStored(PROTECTIONS_KEY, {}));
     const client = useMemo(() => createApiClient(runtimeMode), [runtimeMode]);
 
     useEffect(() => {
@@ -91,6 +100,7 @@ const App = () => {
             setMoneyInput(String(mData.money ?? 0));
             setBpInput(String(bpData.bp ?? 0));
             setSaveExt(file.name.toLowerCase().endsWith('.srm') ? '.srm' : '.sav');
+            setLastRelease([]);
             setIsLoaded(true);
         } catch (err) {
             alert(err.message || "Upload failed for current runtime mode.");
@@ -429,40 +439,92 @@ const App = () => {
         }
     };
 
-    const handleReleasePC = async ({ box, slot, pokemon }) => {
-        const label = pokemon?.nickname || pokemon?.species_name || 'this Pokemon';
-        if (!window.confirm(`Release ${label} from ${Number(box) === 26 ? 'Preset' : `Box ${box}`} slot ${slot}?`)) {
-            return;
-        }
+    const updateFavorites = (pids, on) => setFavorites((prev) => {
+        const next = new Set(prev);
+        pids.forEach((pid) => (on ? next.add(pid) : next.delete(pid)));
+        saveStored(FAVORITES_KEY, [...next]);
+        return next;
+    });
+
+    const updateProtections = (next) => {
+        setProtections(next);
+        saveStored(PROTECTIONS_KEY, next);
+    };
+
+    // Single entry point for every release: skips protected Pokemon, confirms once, saves once.
+    const releaseTargets = async (targets) => {
         try {
-            await client.releasePc({ box, slot });
-            await client.saveAll();
-            setRefreshKey(prev => prev + 1);
-            alert('Pokemon released successfully.');
-        } catch {
-            alert('Failed to release Pokemon.');
+            const boxes = [...new Set(targets.map(({ box }) => Number(box)))];
+            const rows = (await Promise.all(boxes.map((box) => client.getPcBox(box)))).flat();
+            const byKey = new Map(rows.map((pk) => [`${pk.box}:${pk.slot}`, pk]));
+            const name = (pk) => pk.nickname || pk.species_name || 'Pokemon';
+            const releasable = [];
+            const skipped = [];
+            for (const { box, slot } of targets) {
+                const pk = byKey.get(`${Number(box)}:${Number(slot)}`);
+                if (!pk) continue;
+                const why = protectionReasons(pk, favorites, protections);
+                (why.length ? skipped : releasable).push({ box: Number(box), slot: Number(slot), pk, why });
+            }
+            const skippedText = skipped.slice(0, 5).map(({ pk, why }) => `${name(pk)} (${why.join(', ')})`).join('; ')
+                + (skipped.length > 5 ? `; +${skipped.length - 5} more` : '');
+            if (!releasable.length) {
+                if (skipped.length) alert(`Nothing released. Protected: ${skippedText}.`);
+                return;
+            }
+            const names = releasable.slice(0, 5).map(({ pk }) => name(pk)).join(', ') + (releasable.length > 5 ? `, +${releasable.length - 5} more` : '');
+            const note = skipped.length ? `\n\n${skipped.length} protected will be skipped: ${skippedText}.` : '';
+            if (!window.confirm(`Release ${releasable.length} Pokemon (${names})?${note}`)) return;
+
+            const undo = [];
+            let lastError;
+            for (const { box, slot } of releasable) {
+                try {
+                    const res = await client.releasePc({ box, slot });
+                    if (res?.raw) undo.push({ box, slot, raw: res.raw });
+                } catch (err) {
+                    lastError = err;
+                }
+            }
+            if (undo.length) await client.saveAll();
+            setLastRelease(undo);
+            setRefreshKey((prev) => prev + 1);
+            if (lastError) alert(`Released ${undo.length} of ${releasable.length}. ${lastError?.message || 'Some failed.'}`);
+        } catch (err) {
+            alert(`Failed to release Pokemon: ${err?.message || 'unknown error'}`);
         }
     };
 
-    const handleReleaseManyPC = async (targets) => {
-        if (!window.confirm(`Release ${targets.length} Pokemon? This can't be undone once you download the save.`)) return;
-        let released = 0;
+    const handleReleasePC = ({ box, slot }) => releaseTargets([{ box, slot }]);
+
+    const handleUndoRelease = async () => {
+        let restored = 0;
         let lastError;
-        for (const { box, slot } of targets) {
+        for (const record of lastRelease) {
             try {
-                await client.releasePc({ box, slot });
-                released++;
+                await client.restorePc(record);
+                restored++;
             } catch (err) {
                 lastError = err;
             }
         }
         try {
-            if (released) await client.saveAll();
+            if (restored) await client.saveAll();
         } catch (err) {
             lastError = err;
         }
-        setRefreshKey(prev => prev + 1);
-        if (lastError) alert(`Released ${released} of ${targets.length}. ${lastError?.message || 'Some failed.'}`);
+        setLastRelease([]);
+        setRefreshKey((prev) => prev + 1);
+        if (lastError) alert(`Restored ${restored} of ${lastRelease.length}. ${lastError?.message || 'Some failed.'}`);
+    };
+
+    const handleSortBox = async (box, sortKey) => {
+        try {
+            if (await sortPcBox(client, Number(box), sortKey)) await client.saveAll();
+            setRefreshKey((prev) => prev + 1);
+        } catch (err) {
+            alert(`Failed to sort box: ${err?.message || 'unknown error'}`);
+        }
     };
 
     const handleMovePC = async (payload) => {
@@ -972,6 +1034,10 @@ const App = () => {
                                     onEditPokemon={(pk) => setSelectedPokemon(pk)}
                                 />
                             )}
+                            {(activeTab === 'pc' || activeTab === 'all') && (
+                                <ReleaseProtections enabled={protections} onChange={updateProtections}
+                                    undoCount={lastRelease.length} onUndo={handleUndoRelease} />
+                            )}
                             {activeTab === 'pc' && <PCGrid
                                 key={`pc-${refreshKey}`}
                                 client={client}
@@ -983,9 +1049,13 @@ const App = () => {
                                 onAddPokemon={(target) => setPcInsertTarget(target)}
                                 onReleasePokemon={handleReleasePC}
                                 onMovePokemon={handleMovePC}
-                                onReleaseMany={handleReleaseManyPC}
+                                onReleaseMany={releaseTargets}
+                                favorites={favorites}
+                                onFavorite={updateFavorites}
+                                onSortBox={handleSortBox}
                             />}
-                            {supports('roster_export') && activeTab === 'all' && <AllPokemonTable key={`all-${refreshKey}`} client={client} onReleaseMany={handleReleaseManyPC} />}
+                            {supports('roster_export') && activeTab === 'all' && <AllPokemonTable key={`all-${refreshKey}`} client={client} onReleaseMany={releaseTargets}
+                                favorites={favorites} onFavorite={updateFavorites} protections={protections} />}
                             {activeTab === 'bag' && <BagView client={client} initialUnsaved={bagHasUnsavedChanges} onDirtyChange={setBagHasUnsavedChanges} />}
                             {supports('pokedex') && activeTab === 'dex' && <LivingDexPanel key={`dex-${refreshKey}`} client={client} />}
                         </Suspense>

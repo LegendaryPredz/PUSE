@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Search, RefreshCw } from 'lucide-react';
+import { Search, RefreshCw, Star } from 'lucide-react';
 import { NATURES } from '../core/showdownImport.js';
 import { POKEMON_ICON_FALLBACK_URL } from '../core/iconResolver.js';
 import { ALL_POKEMON_BOXES } from '../services/allPokemon.js';
+import { SORTS, ivTotal } from '../services/pokemonSort.js';
+import { protectionReasons } from '../services/protection.js';
 import { buildRoster, rosterMarkdown, rosterShowdown } from '../services/rosterExport.js';
 
 const PAGE_SIZE = 100;
@@ -63,12 +65,15 @@ function Inspection({ pokemon, itemNames, moveNames }) {
     );
 }
 
-function PokemonRow({ pokemon, expanded, onToggle, getPokemonIconUrl, itemNames, moveNames, selected, onSelect }) {
+function PokemonRow({ pokemon, expanded, onToggle, getPokemonIconUrl, itemNames, moveNames, selected, onSelect, favorite, onFavorite, protectedBy }) {
     const name = pokemon.nickname || displayName(pokemon);
     return (
         <div className="border-t border-slate-700/70 first:border-t-0" role="listitem">
             {pokemon.source === 'pc' && <label className="flex items-center gap-2 px-4 pt-2 text-xs text-slate-300 sm:px-6">
-                <input type="checkbox" checked={selected} onChange={onSelect} aria-label={`Include ${name} in ${pokemon.location} in roster export`} className="accent-blue-500" /> Include in export
+                <input type="checkbox" checked={selected} onChange={onSelect} aria-label={`Include ${name} in ${pokemon.location} in roster export`} className="accent-blue-500" /> Include in export / release
+                {onFavorite && <button type="button" onClick={onFavorite} aria-pressed={favorite} aria-label={`${favorite ? 'Unfavorite' : 'Favorite'} ${name} in ${pokemon.location}`}
+                    className={`ml-2 ${favorite ? 'text-amber-300' : 'text-slate-500 hover:text-amber-300'}`}><Star size={14} fill={favorite ? 'currentColor' : 'none'} /></button>}
+                {protectedBy.length > 0 && <span className="ml-auto text-[11px] text-amber-300">Protected: {protectedBy.join(', ')}</span>}
             </label>}
             <button
                 type="button"
@@ -94,14 +99,14 @@ function PokemonRow({ pokemon, expanded, onToggle, getPokemonIconUrl, itemNames,
                 <span className="text-right text-xs text-blue-200 md:text-left">{pokemon.location}</span>
                 <span className="text-sm text-slate-300"><span className="text-slate-500 md:hidden">Level </span>{pokemon.level ?? '—'}</span>
                 <span className="text-right text-sm text-slate-300 md:text-left">{natureName(pokemon)}</span>
-                <span className="col-span-2 truncate text-xs text-slate-400 md:col-span-1">{pokemon.ability_name_current || pokemon.effective_ability_name || 'Unknown ability'}</span>
+                <span className="col-span-2 truncate text-xs text-slate-400 md:col-span-1">{pokemon.ability_name_current || pokemon.effective_ability_name || 'Unknown ability'} · IV {ivTotal(pokemon)}</span>
             </button>
             {expanded && <Inspection pokemon={pokemon} itemNames={itemNames} moveNames={moveNames} />}
         </div>
     );
 }
 
-export default function AllPokemonTable({ client, onReleaseMany }) {
+export default function AllPokemonTable({ client, onReleaseMany, favorites = new Set(), onFavorite, protections = {} }) {
     const [pokemon, setPokemon] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
@@ -110,6 +115,8 @@ export default function AllPokemonTable({ client, onReleaseMany }) {
     const [source, setSource] = useState('all');
     const [box, setBox] = useState('all');
     const [shinyOnly, setShinyOnly] = useState(false);
+    const [sortKey, setSortKey] = useState('location');
+    const [duplicatesOnly, setDuplicatesOnly] = useState(false);
     const [shown, setShown] = useState(PAGE_SIZE);
     const [inspectedKey, setInspectedKey] = useState(null);
     const [itemNames, setItemNames] = useState(new Map());
@@ -147,14 +154,20 @@ export default function AllPokemonTable({ client, onReleaseMany }) {
 
     const filtered = useMemo(() => {
         const needle = query.trim().toLocaleLowerCase();
-        return pokemon.filter((row) => {
+        const counts = new Map();
+        pokemon.forEach((row) => counts.set(row.species_id, (counts.get(row.species_id) || 0) + 1));
+        const rows = pokemon.filter((row) => {
             if (source !== 'all' && row.source !== source) return false;
             if (box !== 'all' && (row.source !== 'pc' || row.box !== Number(box))) return false;
             if (shinyOnly && !row.is_shiny) return false;
+            if (duplicatesOnly && counts.get(row.species_id) < 2) return false;
             return !needle || [row.nickname, displayName(row), row.location]
                 .some((value) => String(value || '').toLocaleLowerCase().includes(needle));
         });
-    }, [pokemon, query, source, box, shinyOnly]);
+        // Duplicates are only useful grouped by species, so default that view to the species sort.
+        const key = sortKey === 'location' && duplicatesOnly ? 'species' : sortKey;
+        return key === 'location' ? rows : [...rows].sort(SORTS[key].compare);
+    }, [pokemon, query, source, box, shinyOnly, sortKey, duplicatesOnly]);
 
     const partyCount = pokemon.filter((row) => row.source === 'party').length;
     const resetPage = () => { setShown(PAGE_SIZE); setInspectedKey(null); };
@@ -218,6 +231,19 @@ export default function AllPokemonTable({ client, onReleaseMany }) {
                 <label className="flex items-center gap-2 px-1 text-sm text-slate-200">
                     <input type="checkbox" checked={shinyOnly} onChange={(event) => { setShinyOnly(event.target.checked); resetPage(); }} className="accent-blue-500" /> Shiny
                 </label>
+                <div className="flex flex-wrap items-center gap-4 sm:col-span-full">
+                    <label className="flex items-center gap-2 text-sm text-slate-200">
+                        Sort
+                        <select value={sortKey} onChange={(event) => { setSortKey(event.target.value); resetPage(); }}
+                            className="rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-blue-400">
+                            <option value="location">Location</option>
+                            {Object.entries(SORTS).map(([key, { label }]) => <option key={key} value={key}>{label}</option>)}
+                        </select>
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-slate-200">
+                        <input type="checkbox" checked={duplicatesOnly} onChange={(event) => { setDuplicatesOnly(event.target.checked); resetPage(); }} className="accent-blue-500" /> Duplicates only
+                    </label>
+                </div>
             </div>
 
             {!loading && !error && <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-700 bg-slate-800/70 p-3 text-sm">
@@ -237,6 +263,9 @@ export default function AllPokemonTable({ client, onReleaseMany }) {
                     className="rounded-lg border border-blue-500 px-3 py-2 font-semibold text-blue-100 hover:bg-blue-500/20 disabled:opacity-50">Export Markdown</button>
                 <button type="button" onClick={copyShowdown} disabled={!partyCount && !selectedCount}
                     className="rounded-lg border border-blue-500 px-3 py-2 font-semibold text-blue-100 hover:bg-blue-500/20 disabled:opacity-50">Copy Showdown</button>
+                {onFavorite && [true, false].map((on) => <button key={String(on)} type="button" disabled={!selectedCount}
+                    onClick={() => onFavorite(pokemon.filter((row) => row.source === 'pc' && selectedPcKeys.has(row.rosterKey)).map((row) => row.pid), on)}
+                    className="rounded-lg border border-amber-400/50 px-3 py-2 font-semibold text-amber-200 hover:bg-amber-500/20 disabled:opacity-50">{on ? 'Favorite' : 'Unfavorite'} selected</button>)}
                 {onReleaseMany && <button type="button" disabled={!selectedCount}
                     onClick={() => onReleaseMany(pokemon.filter((row) => row.source === 'pc' && selectedPcKeys.has(row.rosterKey)).map(({ box, slot }) => ({ box, slot })))}
                     className="rounded-lg bg-red-600/80 px-3 py-2 font-semibold text-white hover:bg-red-500 disabled:opacity-50">Release selected ({selectedCount})</button>}
@@ -254,6 +283,8 @@ export default function AllPokemonTable({ client, onReleaseMany }) {
                 {filtered.slice(0, shown).map((row) => <PokemonRow key={row.rosterKey} pokemon={row} expanded={inspectedKey === row.rosterKey}
                     onToggle={() => setInspectedKey((current) => current === row.rosterKey ? null : row.rosterKey)} getPokemonIconUrl={client.getPokemonIconUrl}
                     itemNames={itemNames} moveNames={moveNames} selected={selectedPcKeys.has(row.rosterKey)}
+                    favorite={favorites.has(row.pid)} protectedBy={row.source === 'pc' ? protectionReasons(row, favorites, protections) : []}
+                    onFavorite={onFavorite && (() => onFavorite([row.pid], !favorites.has(row.pid)))}
                     onSelect={() => setSelectedPcKeys((current) => {
                         const next = new Set(current);
                         if (next.has(row.rosterKey)) next.delete(row.rosterKey); else next.add(row.rosterKey);

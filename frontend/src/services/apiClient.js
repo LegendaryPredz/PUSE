@@ -338,6 +338,13 @@ const backendClient = {
             body: JSON.stringify(payload),
         });
     },
+    restorePc(payload) {
+        return backendJson("/pc/restore", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+        });
+    },
     releasePc(payload) {
         return backendJson("/pc/release", {
             method: "POST",
@@ -737,8 +744,16 @@ const localClient = {
             context = loadPcContext(getBuffer());
             setPcContext(context);
         }
-        releasePcMon(context, payload || {});
-        return { status: 'PC release buffered' };
+        return { status: 'PC release buffered', ...releasePcMon(context, payload || {}) };
+    },
+    async restorePc(payload) {
+        const { getPcContext, loadPcContext, setPcContext, getBuffer, restorePcMon } = await getLocalCoreModules();
+        let context = getPcContext();
+        if (!context) {
+            context = loadPcContext(getBuffer());
+            setPcContext(context);
+        }
+        return restorePcMon(context, payload || {});
     },
     async insertPc(payload) {
         const {

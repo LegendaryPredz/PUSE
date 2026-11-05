@@ -1635,6 +1635,7 @@ async def release_pc_mon(upd: PCRelease):
     if target is None:
         raise HTTPException(status_code=404, detail="Pokemon not found in PC")
 
+    released_hex = bytes(target.raw).hex()
     empty = box_mod.release_pc_mon(target.raw)
     if box == 26:
         buf = current_save["pc_context"].get("preset_buffer")
@@ -1660,7 +1661,7 @@ async def release_pc_mon(upd: PCRelease):
         buf[off: off + box_mod.MON_SIZE_PC] = empty
 
     current_save["pc_context"]["mons"].remove(target)
-    return {"status": "Pokemon released from PC", "box": box, "slot": slot}
+    return {"status": "Pokemon released from PC", "box": box, "slot": slot, "raw": released_hex}
 
 
 class PCMove(BaseModel):
@@ -1720,19 +1721,59 @@ async def move_pc_mon(upd: PCMove):
     ctx = current_save["pc_context"]
     ctx["mons"] = [m for m in ctx["mons"] if (m.box, m.slot) not in (src, dst)]
     for key, raw in new_raws.items():
-        buf, off, kind = locs[key]
-        buf[off: off + size] = raw
-        if kind == "absolute":
-            sector_off = (off // box_mod.SECTION_SIZE) * box_mod.SECTION_SIZE
-            if _should_track_absolute_sector_for_checksum(current_save["data"], sector_off):
-                ctx["absolute_touched_sectors"] = sorted(set(ctx.get("absolute_touched_sectors", [])) | {sector_off})
-        mon = box_mod.UnboundPCMon(bytearray(raw), *key)
-        if mon.is_valid:
-            mon.buffer_offset = off
-            if kind == "absolute":
-                mon.buffer_kind = "absolute"
-            ctx["mons"].append(mon)
+        _write_pc_slot(ctx, key, locs[key], raw)
     return {"box": dst[0], "slot": dst[1], "swapped": swapped}
+
+
+def _write_pc_slot(ctx, key, loc, raw):
+    """Write a raw record into a located slot and register it in the PC context."""
+    buf, off, kind = loc
+    size = box_mod.MON_SIZE_PC
+    buf[off: off + size] = raw
+    if kind == "absolute":
+        sector_off = (off // box_mod.SECTION_SIZE) * box_mod.SECTION_SIZE
+        if _should_track_absolute_sector_for_checksum(current_save["data"], sector_off):
+            ctx["absolute_touched_sectors"] = sorted(set(ctx.get("absolute_touched_sectors", [])) | {sector_off})
+    mon = box_mod.UnboundPCMon(bytearray(raw), *key)
+    if mon.is_valid:
+        mon.buffer_offset = off
+        if kind == "absolute":
+            mon.buffer_kind = "absolute"
+        ctx["mons"].append(mon)
+
+
+class PCRestore(BaseModel):
+    box: int
+    slot: int
+    raw: str
+
+
+@app.post("/pc/restore")
+async def restore_pc_mon(upd: PCRestore):
+    """Undo for /pc/release: write the returned raw record back into an empty slot."""
+    _require_feature("pc_insert")
+    if not current_save["data"]:
+        raise HTTPException(status_code=400, detail="Upload a .sav file")
+    if current_save["pc_context"].get("pc_buffer") is None:
+        await load_pc()
+
+    size = box_mod.MON_SIZE_PC
+    try:
+        raw = bytes.fromhex(upd.raw)
+    except ValueError:
+        raw = b""
+    if len(raw) != size or box_mod.ru16(raw, box_mod.OFF_SPECIES) == 0:
+        raise HTTPException(status_code=400, detail="Invalid Pokemon record")
+    key = (int(upd.box), int(upd.slot))
+    loc = _pc_slot_location(*key)
+    buf, off, _ = loc
+    if box_mod.ru16(bytes(buf[off: off + size]), box_mod.OFF_SPECIES) != 0:
+        raise HTTPException(status_code=400, detail="Target slot is occupied")
+
+    ctx = current_save["pc_context"]
+    ctx["mons"] = [m for m in ctx["mons"] if (m.box, m.slot) != key]
+    _write_pc_slot(ctx, key, loc, raw)
+    return {"box": key[0], "slot": key[1]}
 
 
 # --- Additional models for party updates ---
